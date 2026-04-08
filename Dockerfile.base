@@ -1,0 +1,66 @@
+# ──────────────────────────────────────────────
+# Stage 1: Builder — install all heavy deps here
+# ──────────────────────────────────────────────
+FROM python:3.12.5-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# System dependencies needed to compile QuantLib and others
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    gcc \
+    g++ \
+    cmake \
+    libboost-all-dev \
+    libhdf5-dev \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements.txt .
+
+# Install deps into a prefix we can copy cleanly
+RUN pip install --upgrade pip && \
+    pip install --prefix=/install -r requirements.txt
+
+# ──────────────────────────────────────────────
+# Stage 2: Runtime — lean final image < 500 MB
+# ──────────────────────────────────────────────
+FROM python:3.12.5-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/install/bin:$PATH" \
+    PYTHONPATH="/install/lib/python3.12/site-packages:/app"
+
+# Only runtime system libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgomp1 \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy installed Python packages from builder
+COPY --from=builder /install /install
+
+WORKDIR /app
+
+RUN addgroup --system appgroup && adduser --system --group appuser
+
+# Copy application source
+COPY --chown=appuser:appgroup alpha/    ./alpha/
+COPY --chown=appuser:appgroup api/      ./api/
+COPY --chown=appuser:appgroup backtester/ ./backtester/
+COPY --chown=appuser:appgroup data/     ./data/
+COPY --chown=appuser:appgroup risk/     ./risk/
+
+USER appuser
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+CMD ["uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

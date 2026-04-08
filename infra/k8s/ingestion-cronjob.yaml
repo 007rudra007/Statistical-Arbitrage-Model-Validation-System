@@ -1,0 +1,184 @@
+# ── NSE Ingestion CronJob ──────────────────────────────────────────────────────
+# Runs daily at 16:15 IST (10:45 UTC) – 45 min after NSE market close (15:30 IST).
+# Fetches daily EOD OHLCV for all NIFTY50/BankNifty tickers → MinIO.
+# Also runs intraday 1m fetch at 08:00 IST (02:30 UTC) for pre-market cache warm.
+#
+# Apply:  kubectl apply -f infra/k8s/ingestion-cronjob.yaml
+# Manual: kubectl create job --from=cronjob/nse-ingestion-daily nse-ingest-now -n aladdin
+
+---
+# ── Daily EOD Ingestion ────────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nse-ingestion-daily
+  namespace: aladdin
+  labels:
+    app: nse-ingestion
+    component: data
+    frequency: daily
+spec:
+  schedule: "45 10 * * 1-5"          # 16:15 IST Mon–Fri
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 5
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800     # 30-min timeout
+      template:
+        metadata:
+          labels:
+            app: nse-ingestion
+            frequency: daily
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: aladdin-ingestion
+
+          initContainers:
+            - name: wait-for-minio
+              image: curlimages/curl:8.7.1
+              command:
+                - sh
+                - -c
+                - |
+                  until curl -sf http://minio.aladdin.svc.cluster.local:9000/minio/health/live; do
+                    echo "Waiting for MinIO..."; sleep 5
+                  done
+
+          containers:
+            - name: ingestion
+              image: 012345678901.dkr.ecr.ap-south-1.amazonaws.com/aladdin-base:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "data.nse_ingestion", "--mode", "daily"]
+
+              env:
+                - name: MINIO_ENDPOINT
+                  value: "http://minio.aladdin.svc.cluster.local:9000"
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-ingestion-credentials
+                      key: accessKey
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-ingestion-credentials
+                      key: secretKey
+                - name: BUCKET_RAW
+                  value: "aladdin-raw"
+                - name: BUCKET_CLEAN
+                  value: "aladdin-clean"
+                - name: DAILY_LOOKBACK_YEARS
+                  value: "5"
+
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+
+---
+# ── Intraday 1m Ingestion ─────────────────────────────────────────────────────
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nse-ingestion-intraday
+  namespace: aladdin
+  labels:
+    app: nse-ingestion
+    component: data
+    frequency: intraday
+spec:
+  schedule: "30 2 * * 1-5"           # 08:00 IST Mon–Fri
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 2700     # 45-min timeout
+      template:
+        metadata:
+          labels:
+            app: nse-ingestion
+            frequency: intraday
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: aladdin-ingestion
+
+          initContainers:
+            - name: wait-for-minio
+              image: curlimages/curl:8.7.1
+              command:
+                - sh
+                - -c
+                - |
+                  until curl -sf http://minio.aladdin.svc.cluster.local:9000/minio/health/live; do
+                    echo "Waiting for MinIO..."; sleep 5
+                  done
+
+          containers:
+            - name: ingestion
+              image: 012345678901.dkr.ecr.ap-south-1.amazonaws.com/aladdin-base:latest
+              imagePullPolicy: Always
+              command: ["python", "-m", "data.nse_ingestion", "--mode", "intraday"]
+
+              env:
+                - name: MINIO_ENDPOINT
+                  value: "http://minio.aladdin.svc.cluster.local:9000"
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-ingestion-credentials
+                      key: accessKey
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-ingestion-credentials
+                      key: secretKey
+                - name: BUCKET_RAW
+                  value: "aladdin-raw"
+                - name: BUCKET_CLEAN
+                  value: "aladdin-clean"
+                - name: INTRADAY_LOOKBACK_DAYS
+                  value: "7"
+
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+
+---
+# Ingestion credentials Secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-ingestion-credentials
+  namespace: aladdin
+  labels:
+    app: nse-ingestion
+type: Opaque
+data:
+  # echo -n "aladdin-ingestion" | base64
+  accessKey: YWxhZGRpbi1pbmdlc3Rpb24=
+  # echo -n "ingestion-secret-change-in-prod" | base64
+  secretKey: aW5nZXN0aW9uLXNlY3JldC1jaGFuZ2UtaW4tcHJvZA==
+
+---
+# ServiceAccount for ingestion pods (IRSA in AWS)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aladdin-ingestion
+  namespace: aladdin
+  annotations:
+    eks.amazonaws.com/role-arn: "arn:aws:iam::012345678901:role/AladdinIngestionRole"
+  labels:
+    app: nse-ingestion

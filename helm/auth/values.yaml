@@ -1,0 +1,43 @@
+replicaCount: 2
+
+image:
+  repository: aladdin-auth          # overridden by CI to ECR URI
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+service:
+  type: ClusterIP
+  port: 8001
+
+ingress:
+  enabled: false                     # set true + add ALB annotations for AWS prod
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+env:
+  JWT_EXPIRE_MINUTES: "60"
+
+# JWT secret — override in prod via --set or External Secrets Operator
+jwtSecret: "change-me-in-production"
+
+# AWS-specific: pull secret from SSM Parameter Store (optional)
+aws:
+  enabled: false
+  region: "ap-south-1"
+  ssmSecretPath: "/aladdin/auth/jwt-secret"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

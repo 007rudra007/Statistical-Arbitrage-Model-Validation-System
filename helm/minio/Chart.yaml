@@ -1,0 +1,16 @@
+apiVersion: v2
+name: minio
+description: >
+  MinIO object storage Helm chart for Aladdin data lake.
+  Provides S3-compatible storage for raw tick data, Delta Lake tables,
+  portfolio JSON files, and risk reports.
+type: application
+version: 1.0.0
+appVersion: "RELEASE.2024-01-01T00-00-00Z"
+keywords:
+  - minio
+  - s3
+  - storage
+  - aladdin
+maintainers:
+  - name: Aladdin Platform Team

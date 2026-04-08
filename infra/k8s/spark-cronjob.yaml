@@ -1,0 +1,139 @@
+# ── Spark CronJob – Aladdin Data Pipeline ─────────────────────────────────────
+# Kubernetes CronJob that runs the PySpark Delta Lake pipeline daily at 18:30 IST
+# (13:00 UTC) – after NSE market close at 15:30 IST.
+#
+# Apply:  kubectl apply -f infra/k8s/spark-cronjob.yaml
+# Run now: kubectl create job --from=cronjob/spark-pipeline spark-pipeline-manual -n aladdin
+# Logs:   kubectl logs -l job-name=spark-pipeline-manual -n aladdin --follow
+
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: spark-pipeline
+  namespace: aladdin
+  labels:
+    app: spark-pipeline
+    component: data
+    tier: batch
+spec:
+  # 13:00 UTC = 18:30 IST (Mon–Fri)
+  schedule: "0 13 * * 1-5"
+  concurrencyPolicy: Forbid           # never run two instances simultaneously
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 300        # give up if >5 min late
+  jobTemplate:
+    spec:
+      backoffLimit: 2                  # retry up to 2 times on failure
+      activeDeadlineSeconds: 7200      # kill if running >2 hours
+      template:
+        metadata:
+          labels:
+            app: spark-pipeline
+            component: data
+        spec:
+          restartPolicy: OnFailure
+
+          # ── ServiceAccount for IRSA (AWS) ──────────────────────────────────
+          serviceAccountName: aladdin-spark
+
+          # ── Init: wait for MinIO ────────────────────────────────────────────
+          initContainers:
+            - name: wait-for-minio
+              image: curlimages/curl:8.7.1
+              command:
+                - sh
+                - -c
+                - |
+                  until curl -sf http://minio.aladdin.svc.cluster.local:9000/minio/health/live; do
+                    echo "Waiting for MinIO..."; sleep 5;
+                  done
+                  echo "MinIO is ready."
+
+          # ── Main Spark job ──────────────────────────────────────────────────
+          containers:
+            - name: spark-pipeline
+              image: 012345678901.dkr.ecr.ap-south-1.amazonaws.com/aladdin-spark:latest
+              imagePullPolicy: Always
+              command:
+                - python
+                - services/spark/spark_pipeline.py
+
+              env:
+                # MinIO / S3 connection
+                - name: MINIO_ENDPOINT
+                  value: "http://minio.aladdin.svc.cluster.local:9000"
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-spark-credentials
+                      key: accessKey
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: minio-spark-credentials
+                      key: secretKey
+                - name: BUCKET_RAW
+                  value: "aladdin-raw"
+                - name: BUCKET_DELTA
+                  value: "aladdin-delta"
+                # Date override (leave empty for auto today)
+                - name: RUN_DATE
+                  value: ""
+                # Spark tuning
+                - name: SPARK_DRIVER_MEMORY
+                  value: "1g"
+                - name: SPARK_EXECUTOR_MEMORY
+                  value: "1g"
+
+              resources:
+                requests:
+                  cpu: 500m
+                  memory: 1536Mi
+                limits:
+                  cpu: "2"
+                  memory: 3Gi
+
+              volumeMounts:
+                - name: spark-tmp
+                  mountPath: /tmp/spark
+
+          volumes:
+            - name: spark-tmp
+              emptyDir:
+                sizeLimit: 5Gi
+
+          # ── Node scheduling ─────────────────────────────────────────────────
+          nodeSelector: {}
+          tolerations: []
+
+---
+# Secret for MinIO Spark credentials
+# In prod, populate via External Secrets Operator pulling from AWS Secrets Manager.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-spark-credentials
+  namespace: aladdin
+  labels:
+    app: spark-pipeline
+type: Opaque
+data:
+  # echo -n "aladdin-spark" | base64
+  accessKey: YWxhZGRpbi1zcGFyaw==
+  # echo -n "spark-secret-change-in-prod" | base64
+  secretKey: c3Bhcmstc2VjcmV0LWNoYW5nZS1pbi1wcm9k
+
+---
+# ServiceAccount for IRSA (IAM Roles for Service Accounts) on AWS
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aladdin-spark
+  namespace: aladdin
+  annotations:
+    # Replace with actual Role ARN after running terraform/iam_spark_role.tf
+    eks.amazonaws.com/role-arn: "arn:aws:iam::012345678901:role/AladdinSparkRole"
+  labels:
+    app: spark-pipeline

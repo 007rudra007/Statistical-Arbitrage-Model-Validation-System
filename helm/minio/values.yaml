@@ -1,0 +1,113 @@
+# ── MinIO Helm Values – Aladdin Data Lake ─────────────────────────────────────
+# Install:
+#   helm repo add minio https://charts.min.io/
+#   helm install minio minio/minio -n aladdin --create-namespace -f helm/minio/values.yaml
+#
+# Verify:
+#   kubectl port-forward svc/minio 9000:9000 -n aladdin
+#   curl http://localhost:9000/minio/health/live
+
+# ── Image ─────────────────────────────────────────────────────────────────────
+image:
+  repository: quay.io/minio/minio
+  tag: RELEASE.2024-01-01T00-00-00Z
+  pullPolicy: IfNotPresent
+
+# ── Access credentials (override in prod via --set or External Secrets) ───────
+rootUser: minioadmin
+rootPassword: minioadmin123          # CHANGE IN PRODUCTION
+
+# ── Deployment mode ───────────────────────────────────────────────────────────
+mode: standalone                      # use 'distributed' for HA prod
+
+# ── Storage ───────────────────────────────────────────────────────────────────
+persistence:
+  enabled: true
+  storageClass: ""                    # use cluster default SC; set "gp3" on AWS
+  accessMode: ReadWriteOnce
+  size: 20Gi                          # 20 GB – fits Free Tier EBS
+
+# ── Service ───────────────────────────────────────────────────────────────────
+service:
+  type: ClusterIP
+  port: 9000
+  nodePort: 32000                     # used when type=NodePort on Minikube
+
+consoleService:
+  type: ClusterIP
+  port: 9001
+
+# ── Resources (tuned for t2.micro Free Tier) ─────────────────────────────────
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# ── Buckets to auto-create on first start ─────────────────────────────────────
+buckets:
+  - name: aladdin-raw
+    policy: none
+    purge: false
+  - name: aladdin-clean
+    policy: none
+    purge: false
+  - name: aladdin-delta
+    policy: none
+    purge: false
+  - name: aladdin-portfolios
+    policy: none
+    purge: false
+  - name: aladdin-reports
+    policy: none
+    purge: false
+
+# ── Users with bucket-level policies ─────────────────────────────────────────
+users:
+  - accessKey: aladdin-ingestion
+    secretKey: ingestion-secret-change-in-prod
+    policy: readwrite                 # scoped to aladdin-raw + aladdin-clean
+  - accessKey: aladdin-spark
+    secretKey: spark-secret-change-in-prod
+    policy: readwrite
+  - accessKey: aladdin-api
+    secretKey: api-secret-change-in-prod
+    policy: readonly
+
+# ── Ingress (disabled by default; enable for prod with ALB annotations) ───────
+ingress:
+  enabled: false
+  ingressClassName: alb
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+  hosts:
+    - host: minio.aladdin.internal
+      paths:
+        - path: /
+          pathType: Prefix
+
+consoleIngress:
+  enabled: false
+
+# ── Metrics ───────────────────────────────────────────────────────────────────
+metrics:
+  serviceMonitor:
+    enabled: false                    # set true when Prometheus is installed
+    interval: 30s
+    scrapeTimeout: 10s
+
+# ── Environment – extra config ────────────────────────────────────────────────
+environment:
+  MINIO_BROWSER: "on"
+  MINIO_DOMAIN: "minio.aladdin.internal"
+  # Disable multi-part for small files (improves latency for Parquet uploads)
+  MINIO_STORAGE_CLASS_STANDARD: "EC:0"
+
+# ── Node scheduling ───────────────────────────────────────────────────────────
+nodeSelector: {}
+tolerations: []
+affinity: {}

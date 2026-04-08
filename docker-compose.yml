@@ -1,0 +1,184 @@
+version: "3.8"
+
+# ── LOCAL DEV compose — no K8s needed, run with: docker-compose up ─────────────
+# Phase 2 adds: MinIO (S3-compatible object storage) + Spark pipeline service.
+# Full stack:  docker-compose up
+# Data only:   docker-compose up minio
+# Smoke test:  docker-compose run --rm ingestion python -m data.nse_ingestion --mode daily
+
+services:
+
+  # ── MinIO – S3-compatible Object Storage ─────────────────────────────────
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-01-01T00-00-00Z
+    container_name: aladdin_minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"      # S3 API
+      - "9001:9001"      # MinIO Console UI → http://localhost:9001
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - aladdin_net
+
+  # ── MinIO bucket initialiser (one-shot) ───────────────────────────────────
+  minio-init:
+    image: quay.io/minio/mc:latest
+    container_name: aladdin_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 minioadmin minioadmin123 &&
+        mc mb --ignore-existing local/aladdin-raw &&
+        mc mb --ignore-existing local/aladdin-clean &&
+        mc mb --ignore-existing local/aladdin-delta &&
+        mc mb --ignore-existing local/aladdin-portfolios &&
+        mc mb --ignore-existing local/aladdin-reports &&
+        echo 'MinIO buckets initialised.' &&
+        exit 0
+      "
+    networks:
+      - aladdin_net
+    restart: "no"
+
+  # ── NSE Ingestion – run as one-shot or on-demand ─────────────────────────
+  ingestion:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    container_name: aladdin_ingestion
+    command: ["python", "-m", "data.nse_ingestion", "--mode", "daily"]
+    environment:
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin123"
+      BUCKET_RAW: "aladdin-raw"
+      BUCKET_CLEAN: "aladdin-clean"
+      DAILY_LOOKBACK_YEARS: "5"
+      INTRADAY_LOOKBACK_DAYS: "7"
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - ./data:/app/data
+    networks:
+      - aladdin_net
+    restart: "no"           # run manually: docker-compose run --rm ingestion
+
+  # ── ORE / XVA Microservice (QuantLib-ORE) ────────────────────────────────
+  ore:
+    build:
+      context: .
+      dockerfile: services/ore/Dockerfile
+    container_name: aladdin_ore
+    ports:
+      - "8080:8080"      # XVA service → http://localhost:8080/docs
+    environment:
+      PYTHONPATH: /app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aladdin_net
+
+  # ── Auth Microservice ─────────────────────────────────────────────────────
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    container_name: aladdin_auth
+    ports:
+      - "8001:8001"
+    environment:
+      JWT_SECRET_KEY: "local-dev-secret-change-in-prod"
+      JWT_EXPIRE_MINUTES: "60"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/auth/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - aladdin_net
+
+  # ── Quant Backend API ─────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.base
+    container_name: aladdin_api
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      AUTH_SERVICE_URL: "http://auth:8001"
+      # Phase 2: wire API to MinIO
+      MINIO_ENDPOINT: "http://minio:9000"
+      MINIO_ACCESS_KEY: "minioadmin"
+      MINIO_SECRET_KEY: "minioadmin123"
+      BUCKET_RAW: "aladdin-raw"
+      BUCKET_CLEAN: "aladdin-clean"
+      BUCKET_DELTA: "aladdin-delta"
+      BUCKET_PORTFOLIOS: "aladdin-portfolios"
+      BUCKET_REPORTS: "aladdin-reports"
+      # Phase 4: Ollama LLM connection
+      OLLAMA_BASE_URL: "http://ollama:11434"
+      OLLAMA_MODEL: "llama3"
+      LLM_TIMEOUT: "120"
+      LLM_MAX_RETRIES: "3"
+    volumes:
+      - ./output:/app/output
+      - ./data:/app/data
+    depends_on:
+      auth:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - aladdin_net
+
+  # ── Next.js Bloomberg Terminal UI ─────────────────────────────────────────
+  ui:
+    build:
+      context: ./ui
+      dockerfile: Dockerfile
+    container_name: aladdin_terminal
+    ports:
+      - "3001:3001"
+    environment:
+      NEXT_PUBLIC_API_URL: "http://localhost:8000"
+      NEXT_PUBLIC_AUTH_URL: "http://localhost:8001"
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - aladdin_net
+
+networks:
+  aladdin_net:
+    driver: bridge
+
+volumes:
+  output_data:
+  minio_data:          # persistent MinIO storage across restarts
+  ollama_data:         # persistent Ollama model storage (~4GB for llama3)
+

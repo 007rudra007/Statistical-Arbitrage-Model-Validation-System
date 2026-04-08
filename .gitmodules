@@ -1,0 +1,3 @@
+[submodule "synthetix-alpha"]
+	path = synthetix-alpha
+	url = https://github.com/007rudra007/synthetix-alpha.git

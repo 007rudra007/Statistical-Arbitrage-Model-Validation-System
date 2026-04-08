@@ -1,0 +1,40 @@
+api:
+  replicaCount: 2
+  image:
+    repository: aladdin/api
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 8000
+
+ui:
+  replicaCount: 2
+  image:
+    repository: aladdin/ui
+    tag: latest
+    pullPolicy: IfNotPresent
+  service:
+    port: 3000
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: aladdin.example.local
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend:
+            service:
+              name: aladdin-api
+              port:
+                number: 8000
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: aladdin-ui
+              port:
+                number: 3000

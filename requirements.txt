@@ -1,0 +1,68 @@
+# ── Core quant ──────────────────────────────
+pandas>=2.0
+numpy>=1.24
+scipy>=1.10
+matplotlib>=3.7
+statsmodels>=0.14
+yfinance>=0.2.18
+arch>=6.0
+pykalman>=0.9.7
+quantstats>=0.0.62
+
+# ── Dashboard ───────────────────────────────
+streamlit>=1.35.0
+plotly>=5.22.0
+
+# ── API ─────────────────────────────────────
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.7.0
+
+# ── Auth / Security ─────────────────────────
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.0           # imported directly in services/auth/main.py
+
+# ── AWS ─────────────────────────────────────
+boto3>=1.34.0
+botocore>=1.34.0
+
+# ── AI / Agent layer (Phase 4 prep) ─────────
+# NOTE: pinned versions below (Phase 4 block) supersede these — kept for reference.
+# Actual pins are in the Phase 4 section.
+
+# ── Data / Storage ───────────────────────────
+pyarrow>=16.0.0
+s3fs>=2024.5.0
+
+# ── Observability ────────────────────────────
+prometheus-fastapi-instrumentator>=7.0.0
+
+# ── Phase 2: Spark Pipeline ──────────────────
+# PySpark is baked into the aladdin-spark Docker image (with Delta + S3A JARs).
+# Install locally only for development / IDE support.
+pyspark>=3.5.1
+delta-spark>=3.1.0
+
+# ── Phase 3: Risk Engine ──────────────────────
+# QuantLib optional — pricer falls back to NumPy BSM if not installed.
+# Install with:  pip install QuantLib
+QuantLib>=1.34
+
+# -- Phase 4: AI Multi-Agent Layer ------------------------------------
+# LangGraph + Ollama + RAG (sentence-transformers)
+# Ollama must run separately: https://ollama.com/download
+# Pull model:  ollama pull llama3
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-ollama>=0.2.0
+langchain-community>=0.3.0
+langchain-core>=0.3.0
+sentence-transformers>=3.0.0
+
+# -- Phase 5: Portfolio & Trading -------------------------------------------
+# Optimizer: pip install cvxpy clarabel
+cvxpy>=1.5.0
+clarabel>=0.9.0
+# kiteconnect>=4.2.0
+
