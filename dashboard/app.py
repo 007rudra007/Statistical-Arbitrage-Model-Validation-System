@@ -486,7 +486,7 @@ with st.sidebar:
     st.markdown("---")
 
     ptf_value = st.number_input("Portfolio Value (₹)", value=10_000_000,
-                                 step=100_000, min_value=100_000, format="%d")
+                                 step=10_000, min_value=1000, format="%d")
     lookback = st.slider("Lookback (days)", 60, 756, 252, step=21)
     st.markdown("---")
 
