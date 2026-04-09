@@ -158,7 +158,6 @@ It does not constitute financial advice or a production trading system.
 ## 📬 Contact
 
 Rudra Trivedi  
-Mumbai, India  
-[LinkedIn] | [GitHub]
+
 
 ---
