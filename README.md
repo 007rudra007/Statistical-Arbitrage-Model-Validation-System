@@ -1,7 +1,7 @@
 # 📊 Statistical Arbitrage & Model Validation System  
 ### (NIFTY / BankNifty Futures)
 
-An institutional-grade statistical arbitrage and risk validation system engineered for Indian equity index futures. This project implements advanced time-series models, dynamic volatility estimation, and event-driven backtesting to simulate realistic trading and risk environments.
+An institutional-grade statistical arbitrage and risk validation system engineered for Indian equity index futures. This project implements advanced time-series models, dynamic volatility estimation, and event-driven backtesting to simulate realistic trading and risk environments.This project is inpired by aladdin.
 
 ---
 
